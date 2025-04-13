@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"octoAgent/octoprint"
 	"os"
@@ -12,7 +10,6 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -59,6 +56,13 @@ type Job struct {
 	Filepos int `json:"filepos"`
 }
 
+type JobStatus struct {
+	FileName    string  `json:"file_name"`
+	Progress    float64 `json:"progress"`
+	TimeElapsed float64 `json:"time_elapsed"`
+	TimeLeft    float64 `json:"time_left"`
+}
+
 type Progress struct {
 	Completion    float64 `json:"completion"`
 	Filepos       int     `json:"filepos"`
@@ -66,23 +70,18 @@ type Progress struct {
 	PrintTimeLeft int     `json:"printTimeLeft"`
 }
 
-type Payload struct {
-	Job      Job      `json:"job"`
-	Progress Progress `json:"progress"`
-}
-
-type File struct {
-	Name          string        `json:"name"`
-	Path          string        `json:"path"`
-	Type          string        `json:"type"`
-	TypePath      []string      `json:"typePath"`
-	Hash          string        `json:"hash"`
-	Size          int           `json:"size"`
-	Date          int64         `json:"date"`
-	Origin        string        `json:"origin"`
-	Refs          Refs          `json:"refs"`
-	GcodeAnalysis GcodeAnalysis `json:"gcodeAnalysis"`
-	Print         Print         `json:"print"`
+type FileInfo struct {
+	Name          string                             `json:"name"`
+	Path          string                             `json:"path"`
+	Type          string                             `json:"type"`
+	TypePath      []string                           `json:"typePath"`
+	Hash          string                             `json:"hash"`
+	Size          uint64                             `json:"size"`
+	Date          octoprint.JSONTime                 `json:"date"`
+	Origin        string                             `json:"origin"`
+	Refs          octoprint.Reference                `json:"refs"`
+	GcodeAnalysis octoprint.GCodeAnalysisInformation `json:"gcodeAnalysis"`
+	Print         octoprint.PrintStats               `json:"print"`
 }
 
 type Refs struct {
@@ -92,11 +91,16 @@ type Refs struct {
 }
 
 type GcodeAnalysis struct {
-	EstimatedPrintTime int `json:"estimatedPrintTime"`
+	EstimatedPrintTime float64 `json:"estimatedPrintTime"`
 	Filament           struct {
-		Length int `json:"length"`
-		Volume int `json:"volume"`
+		Length uint32  `json:"length"`
+		Volume float64 `json:"volume"`
 	} `json:"filament"`
+}
+
+type Filament struct {
+	Length float64 `json:"length"`
+	Volume float64 `json:"volume"`
 }
 
 type Print struct {
@@ -108,38 +112,53 @@ type Print struct {
 	} `json:"last"`
 }
 
-type FilesResponse struct {
-	Files []File `json:"Files"`
-	Free  int    `json:"Free"`
+type PrinterStatus struct {
+	State        string  `json:"state"`
+	ExtruderTemp float64 `json:"extruder_temp"`
+	BedTemp      float64 `json:"bed_temp"`
+	Progress     float64 `json:"progress"`
+	FileName     string  `json:"file_name"`
+	TimeLeft     float64 `json:"time_left"`
+	Printing     bool    `json:"printing"`
 }
 
-func GetApiVersion(commandList []string) string {
+type FilesResponse struct {
+	Files []FileInfo `json:"Files"`
+	Free  int        `json:"Free"`
+}
 
-	switch len(commandList) {
-	case 1:
+type TempState struct {
+	Tool   string
+	Time   string
+	Actual float64
+	Target float64
+}
+
+type ConnectionSettings struct {
+	IsConnecting bool
+	IsError      bool
+	IsOffline    bool
+	IsOperation  bool
+	IsPrinting   bool
+	BaudRate     int    `json:"baudrate"`
+	Port         string `json:"port"`
+}
+
+func GetApiVersion() string {
+	if isConnected {
 		octoReq := octoprint.VersionRequest{}
 		s, err := octoReq.Do(octoclient)
 		if err != nil {
 			return ("Error: " + err.Error())
 		}
 
-		return s.API + "\n"
-
-	case 2:
-		if commandList[1] == "-help" {
-			return "usage: getapiversion"
-		} else {
-			return "Error: syntax, second attribute not recognized"
-		}
-
-	default:
-		return "Error: parameter mismatch"
-
+		return s.API
+	} else {
+		return "Error: not connected"
 	}
 }
 
-// Helper to check if OctoPrint is running
-func checkOctoService() string {
+func CheckOctoService() string {
 	if _checkOctoService() {
 		return "OctoService is running"
 	} else {
@@ -209,7 +228,6 @@ func ConnectOctoService() string {
 }
 
 func DisconnectOctoService() string {
-	// Check if OctoPrint is running
 	if !_checkOctoService() {
 		return "Octoprint server is NOT already running, disconnect is not needed"
 	}
@@ -222,85 +240,110 @@ func DisconnectOctoService() string {
 		}
 
 		isConnected = false
-		str := "Disconnected\n"
+		str := "Disconnected"
 		return str
 	} else {
-		return "Already disconnected\n"
+		return "Already disconnected"
 	}
 }
 
-func GetConnection() string {
+func GetConnectionSettings() string {
 	// Check if OctoPrint is running
 	if !_checkOctoService() {
-		return "Octoprint server is NOT already running, please start it"
+		return "Error: octoprint server is NOT already running"
 	}
 
 	if isConnected {
 		octoReq := octoprint.ConnectionRequest{}
-		s, err := octoReq.Do(octoclient)
+		settings, err := octoReq.Do(octoclient)
 		if err != nil {
 			return ("Error: " + err.Error())
 		}
 
-		str := string(s.Current.State)
-		return str + "\n"
+		connectionSettings := ConnectionSettings{
+			IsConnecting: settings.Current.State.IsConnecting(),
+			IsError:      settings.Current.State.IsError(),
+			IsOffline:    settings.Current.State.IsOffline(),
+			IsOperation:  settings.Current.State.IsOperational(),
+			IsPrinting:   settings.Current.State.IsPrinting(),
+			BaudRate:     settings.Current.BaudRate,
+			Port:         settings.Current.Port,
+		}
+		// Encode to JSON
+		jsonBytes, err := json.Marshal(connectionSettings)
+		if err != nil {
+			log.Printf("Error: failed to encode connection setttings: %v", err)
+			return "Error: failed to encode connection settings: " + err.Error()
+		}
+
+		return string(jsonBytes)
 	} else {
-		return "Not connected"
+		return "Error: not connected"
 	}
 }
 
-func GetFileInfo(commandList []string) string {
+func GetOctoFileInfo(commandList []string) string {
 	switch len(commandList) {
 	case 2:
 		if commandList[1] == "-help" {
-			return "usage: getfileinfo filename.ext"
-		} else {
-			if isConnected {
-				octoReq := octoprint.FileRequest{
-					Location:  octoprint.SDCard, // octoprint.Local
-					Filename:  commandList[1],
-					Recursive: false,
-				}
-
-				jsonResponse, err := octoReq.Do(octoclient)
-				if err != nil {
-					return ("Error GetFileInfo: " + err.Error())
-				}
-
-				// Convert jobResponse to JSON bytes
-				jsonData, err := json.Marshal(jsonResponse)
-				if err != nil {
-					return "Error converting to JSON: " + err.Error()
-				}
-
-				// Create an instance of FilesResponse struct to hold the JSON data
-				var file File
-
-				// Unmarshal the JSON data into the FilesResponse struct
-				if err := json.Unmarshal(jsonData, &file); err != nil {
-					return "Error unmarshalling JSON: " + err.Error()
-				}
-
-				result := "Name: " + file.Name + "\n"
-				result += "Size: " + strconv.Itoa(file.Size) + "\n"
-				result += "Hash: " + file.Hash + "\n"
-				result += "Location: " + file.Origin + "\n"
-				result += "EstTime: " + strconv.Itoa(file.GcodeAnalysis.EstimatedPrintTime) + "\n"
-				return result
-			} else {
-				return "Not connected\n"
-			}
+			return `{"usage":"getfileinfo filename.ext"}`
 		}
 
+		if !isConnected {
+			return `{"error":"not connected to octoService"}`
+		}
+
+		// Create file request
+		octoReq := octoprint.FileRequest{
+			Location:  octoprint.Local,
+			Filename:  commandList[1], // e.g., "Ring.gcode"
+			Recursive: false,
+		}
+
+		// Execute request
+		response, err := octoReq.Do(octoclient)
+		if err != nil {
+			log.Printf("GetFileInfo error for %s: %v", commandList[1], err)
+			return fmt.Sprintf(`{"error":"failed to get file info: %v"}`, err)
+		}
+
+		// Log raw response
+		rawBytes, _ := json.Marshal(response)
+		log.Printf("Raw file info for %s: %s", commandList[1], rawBytes)
+
+		// Map to FileInfo
+		fileInfo := FileInfo{
+			Name:          response.Name,
+			Path:          response.Path,
+			Type:          response.Type,
+			TypePath:      response.TypePath,
+			Hash:          response.Hash,
+			Size:          response.Size,
+			Date:          response.Date,
+			Origin:        response.Origin,
+			Refs:          response.Refs,
+			GcodeAnalysis: response.GCodeAnalysis,
+			Print:         response.Print,
+		}
+
+		// Encode to JSON
+		jsonBytes, err := json.Marshal(fileInfo)
+		if err != nil {
+			log.Printf("Error: encoding file info: %v", err)
+			return `{"Error":"failed to encode file info"}`
+		}
+
+		return string(jsonBytes)
+
 	default:
-		return "Error: parameter mismatch"
+		return `{"Error":"parameter mismatch"}`
 	}
 }
 
 func GetOctoFileList() string {
 	if isConnected {
 		octoReq := octoprint.FilesRequest{
-			Location:  octoprint.SDCard, // octoprint.Local
+			Location:  octoprint.Local,
 			Recursive: false,
 		}
 
@@ -326,21 +369,22 @@ func GetOctoFileList() string {
 		// Build result
 		var strB strings.Builder
 		for _, file := range filesResponse.Files {
-			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %d\n", file.Name, file.Size, file.GcodeAnalysis.EstimatedPrintTime)
+			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %f", file.Name, file.Size, file.GcodeAnalysis.EstimatedPrintTime)
 		}
 
 		str := strB.String()
 		return str
 
 	} else {
-		return "Not connected\n"
+		return "Error: not connected"
 	}
 }
 
+/*
 func AddFile(c *octoprint.Client, filename string, fileContent []byte) string {
 	if isConnected {
 		octoReq := octoprint.UploadFileRequest{
-			Location: octoprint.SDCard,
+			Location: octoprint.Local,
 			Select:   false,
 			Print:    false,
 		}
@@ -360,14 +404,17 @@ func AddFile(c *octoprint.Client, filename string, fileContent []byte) string {
 		return response.File.Local.Name + " was added"
 
 	} else {
-		return "Not connected\n"
+		return "Error: not connected"
 	}
 }
+*/
 
-func DeleteOctoFile(filename string) string {
+func DeleteOctoFile(commandList []string) string {
+	filename := commandList[1]
+
 	if isConnected {
 		octoReq := octoprint.DeleteFileRequest{
-			Location: octoprint.SDCard,
+			Location: octoprint.Local,
 			Path:     filename,
 		}
 
@@ -380,11 +427,11 @@ func DeleteOctoFile(filename string) string {
 		return filename + " was deleted"
 
 	} else {
-		return "Not connected\n"
+		return "Not connected"
 	}
 }
 
-func PrintFile(commandList []string) string {
+func PrintOctoFile(commandList []string) string {
 	switch len(commandList) {
 	case 2:
 		if commandList[1] == "-help" {
@@ -397,24 +444,17 @@ func PrintFile(commandList []string) string {
 
 		// File in main/downloads
 		fileName := commandList[1] // e.g., "Ring.gcode"
-		srcPath := filepath.Join("/home/rich/Projects/octo/octoAgent/main/downloads", fileName)
-
-		// Verify source file exists
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			return fmt.Sprintf("Error: file %s does not exist", srcPath)
-		}
 
 		// Destination in OctoPrint’s uploads
 		user, err := user.Current()
 		if err != nil {
 			return fmt.Sprintf("Error getting user home: %v", err)
 		}
-		destPath := filepath.Join(user.HomeDir, ".octoprint/uploads", fileName)
+		filePath := filepath.Join(user.HomeDir, ".octoprint/uploads", fileName)
 
-		// Copy file to OctoPrint’s uploads
-		err = copyFile(srcPath, destPath)
-		if err != nil {
-			return fmt.Sprintf("Error copying file to %s: %v", destPath, err)
+		// Verify file exists
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			return fmt.Sprintf("Error: file %s does not exist", filePath)
 		}
 
 		// Select and print file in OctoPrint’s local storage
@@ -426,7 +466,7 @@ func PrintFile(commandList []string) string {
 
 		err = octoReq.Do(octoclient)
 		if err != nil {
-			return "Error PrintFile: " + err.Error()
+			return "Error: not able to print file: " + err.Error()
 		}
 		return "File is printing"
 
@@ -435,6 +475,7 @@ func PrintFile(commandList []string) string {
 	}
 }
 
+/*
 // copyFile copies a file from src to dst
 func copyFile(src, dst string) error {
 	// Ensure destination directory exists
@@ -465,92 +506,102 @@ func copyFile(src, dst string) error {
 	// Ensure permissions
 	return os.Chmod(dst, 0644) // rw-r--r--
 }
+*/
 
 func SelectFile(c *octoprint.Client, filename string) string {
 	if isConnected {
 		octoReq := octoprint.SelectFileRequest{
-			Location: octoprint.SDCard,
+			Location: octoprint.Local,
 			Path:     filename,
 			Print:    false,
 		}
 
 		err := octoReq.Do(c)
 		if err != nil {
-			return ("Error SelectFile: " + err.Error())
+			return ("Error: selected file: " + err.Error())
 		}
-		return "File has been selected\n"
+		return "File has been selected"
 	} else {
-		return "Not connected\n"
+		return "Error: not connected"
 	}
 }
 
-func GetJobStatus(commandList []string) string {
+func GetGcodeAnalysis(commandList []string) string {
 	switch len(commandList) {
-	case 1:
-		if isConnected {
-			octoReq := octoprint.JobRequest{}
-			jobResponse, err := octoReq.Do(octoclient)
-			if err != nil {
-				return ("Error GetJobStatus: " + err.Error())
-			}
-
-			// Convert jobResponse to JSON bytes
-			jsonData, err := json.Marshal(jobResponse)
-			if err != nil {
-				return "Error converting to JSON: " + err.Error()
-			}
-
-			var payload Payload
-
-			// Unmarshal the JSON data into the Payload struct
-			if err := json.Unmarshal(jsonData, &payload); err != nil {
-				return "Error unmarshalling JSON: " + err.Error()
-			}
-
-			// Format Completion field to one decimal point
-			completionStr := fmt.Sprintf("%.1f", payload.Progress.Completion)
-
-			// Build result
-			result := "Job: " + payload.Job.File.Name + "\n"
-			result += "Estimated completion: " + strconv.Itoa(payload.Job.EstimatedPrintTime) + "\n"
-			result += "Completed(%): " + completionStr + "\n"
-			result += "Elapsed time(s): " + strconv.Itoa(payload.Progress.PrintTime) + "\n"
-			return result
-
-		} else {
-			return "Not connected\n"
-		}
-
 	case 2:
 		if commandList[1] == "-help" {
-			return "usage: getjobstatus"
-		} else {
-			return "Error: syntax, second attribute not recognized"
+			return "usage: printfile filename.ext"
 		}
+
+		if !isConnected {
+			return "Error: not connected to octoService"
+		}
+
+		// Create file request
+		octoReq := octoprint.FileRequest{
+			Location:  octoprint.Local,
+			Filename:  commandList[1], // e.g., "Ring.gcode"
+			Recursive: false,
+		}
+
+		// Execute request
+		response, err := octoReq.Do(octoclient)
+		if err != nil {
+			log.Printf("GetFileInfo error for %s: %v", commandList[1], err)
+			return "Error: failed to get file info: " + err.Error()
+		}
+
+		analysis := GcodeAnalysis{
+			EstimatedPrintTime: response.GCodeAnalysis.EstimatedPrintTime,
+			Filament: struct {
+				Length uint32  `json:"length"`
+				Volume float64 `json:"volume"`
+			}{
+				Length: response.GCodeAnalysis.Filament.Length,
+				Volume: response.GCodeAnalysis.Filament.Volume,
+			},
+		}
+
+		jsonBytes, err := json.Marshal(analysis)
+		if err != nil {
+			return "Error: failed to encode analysis: " + err.Error()
+		}
+		return string(jsonBytes)
 
 	default:
 		return "Error: parameter mismatch"
 	}
 }
 
-func GetTemperature(commandList []string) string {
-	switch len(commandList) {
-	case 1:
-		if isConnected {
-			return _getTemp()
-		} else {
-			return "Not connected\n"
+func GetJobStatus() string {
+	if isConnected {
+		octoReq := octoprint.JobRequest{}
+		job, err := octoReq.Do(octoclient)
+		if err != nil {
+			return ("Error GetJobStatus: " + err.Error())
 		}
 
-	case 2:
-		if commandList[1] == "-help" {
-			return "usage: gettemp"
-		} else {
-			return "Error: syntax, second attribute not recognized"
+		status := JobStatus{
+			FileName:    job.Job.File.Name,
+			Progress:    job.Progress.Completion,
+			TimeElapsed: job.Progress.PrintTime,
+			TimeLeft:    job.Progress.PrintTimeLeft,
 		}
+		jsonBytes, err := json.Marshal(status)
+		if err != nil {
+			return "Error: failed to encode job state: " + err.Error()
+		}
+		return string(jsonBytes)
+	} else {
+		return "Error: not connected"
+	}
+}
 
-	default:
-		return "Error: parameter mismatch"
+func GetTemperature() string {
+	if isConnected {
+		return _getTemp()
+	} else {
+		return "Error: not connected"
 	}
 }
 
@@ -568,13 +619,6 @@ func _getTemp() string {
 
 	str := strB.String()
 	return str
-}
-
-type TempState struct {
-	Tool   string
-	Time   string
-	Actual float64
-	Target float64
 }
 
 func _getTempEntry() string {
@@ -608,37 +652,54 @@ func _getTempEntry() string {
 	return "addtemprecord " + string(str)
 }
 
-func GetPrinterState(commandList []string) string {
-	return "Error: not implemented"
+func GetPrinterState() string {
+	if !isConnected {
+		return "Error: not connected to octoService"
+	}
 
-	/*	switch len(commandList) {
-		case 1:
-			if isConnected {
-				octoReq := octoprint.PrinterState{}
-				list, err := octoReq.Do(octoclient)
-				if err != nil {
-					return ("Error: " + err.Error())
-				}
+	// Get printer state
+	printerReq := octoprint.StateRequest{}
+	printer, err := printerReq.Do(octoclient)
+	if err != nil {
+		return "Error: failed to get printer state: " + err.Error()
+	}
 
-				jsonBytes, err := json.Marshal(list)
-				if err != nil {
-					return "Error: encoding of list"
-				} else {
-					return string(jsonBytes)
-				}
-			} else {
-				return "Not connected"
-			}
+	// Get job state
+	jobReq := octoprint.JobRequest{}
+	job, err := jobReq.Do(octoclient)
+	if err != nil {
+		return "Error: failed to get job state: " + err.Error()
+	}
 
-		case 2:
-			if commandList[1] == "-help" {
-				return "usage: gettemp"
-			} else {
-				return "Error: syntax, second attribute not recognized"
-			}
+	// Get current temperatures	-> remove this after we confirm this works!
+	tempBytes, _ := json.Marshal(printer.Temperature)
+	log.Printf("Raw current temperatures: %s", tempBytes)
 
-		default:
-			return "Error: parameter mismatch"
+	status := PrinterStatus{
+		State:        printer.State.Text,         // e.g., "Printing"
+		ExtruderTemp: 0.0,                        // e.g., 210.0
+		BedTemp:      0.0,                        // e.g., 60.0
+		Progress:     job.Progress.Completion,    // e.g., 75.2
+		FileName:     job.Job.File.Name,          // e.g., "Ring.gcode"
+		TimeLeft:     job.Progress.PrintTimeLeft, // e.g., 1200
+		Printing:     printer.State.Flags.Printing,
+	}
+
+	// Iterate Current map for temps
+	for tool, tempData := range printer.Temperature.Current {
+		if tool == "tool0" {
+			status.ExtruderTemp = tempData.Actual // e.g., 210.0
 		}
-	*/
+		if tool == "bed" {
+			status.BedTemp = tempData.Actual // e.g., 60.0
+		}
+	}
+
+	// Encode to JSON
+	jsonBytes, err := json.Marshal(status)
+	if err != nil {
+		return "Error: failed to encode printer state: " + err.Error()
+	}
+
+	return string(jsonBytes)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -17,50 +18,45 @@ const (
 	UpLoadFilePath   = "./uploads/"
 )
 
+/*
 func Deletefile(commandList []string) string {
 	switch len(commandList) {
 	case 2:
 		if commandList[1] == "-help" {
-			return "usage: deletefile directory[download, upload, octoprint] filename.ext"
-		} else {
-			return "Error: syntax, second attribute not recognized"
+			return "usage: deletefile filename.ext"
 		}
 
-	case 3:
-		// Set vars
-		dir := commandList[1]
-		filename := commandList[2]
-
-		// Is this a file on octoprint
-		if dir == "octoprint" {
-			return DeleteOctoFile(filename)
-		}
-
-		// Set file path
-		path := SetFilePath(dir, filename)
-
-		// Remove file
-		err := os.Remove(path)
-		if err != nil {
-			return "Error deleting file: " + err.Error()
-		} else {
-			return "File was deleted: " + filename
-		}
+		return DeleteOctoFile(commandList[1])
 
 	default:
 		return "Error: parameter mismatch"
 	}
 }
+*/
 
+/*
 func Getfilelist() string {
-	dir := "downloads"
+	// Destination in OctoPrint’s uploads
+	user, err := user.Current()
+	if err != nil {
+		return fmt.Sprintf("Error getting user home: %v", err)
+	}
+	dirPath := filepath.Join(user.HomeDir, ".octoprint/uploads")
 
-	// Set directory path
-	path := SetDirectoryPath(dir)
+	// Verify directory exists
+	if _, err := os.Stat(dirPath); err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Directory %s does not exist", dirPath)
+			return fmt.Sprintf("Error: directory %s does not exist", dirPath)
+		}
+		log.Printf("Error accessing directory %s: %v", dirPath, err)
+		return fmt.Sprintf("Error: cannot access directory %s: %v", dirPath, err)
+	}
 
 	// Read directory
-	fileInfos, err := os.ReadDir(path)
+	fileInfos, err := os.ReadDir(dirPath)
 	if err != nil {
+		log.Printf("Error reading directory %s: %v", dirPath, err)
 		return "Error reading directory: " + err.Error()
 	}
 
@@ -68,13 +64,16 @@ func Getfilelist() string {
 
 	// Create file list
 	for _, file := range fileInfos {
-		filelist = append(filelist, file.Name())
+		if !file.IsDir() {
+			filelist = append(filelist, file.Name())
+		}
 	}
 
 	// Encode file list
 	if len(filelist) > 0 {
 		jsonBytes, err := json.Marshal(filelist)
 		if err != nil {
+			log.Printf("Error encoding file list: %v", err)
 			return "Error: encoding of list"
 		} else {
 			return string(jsonBytes)
@@ -83,6 +82,7 @@ func Getfilelist() string {
 		return "The directory was empty"
 	}
 }
+*/
 
 // This is an upload to S3 and then provide meta data for sharing
 func Getfile(commandList []string) string {
@@ -170,24 +170,28 @@ func Downloadfile(commandList []string) string {
 		downloadUriList := strings.Split(downloadUri, "/")
 
 		// Get the file name
-		filename := downloadUriList[len(downloadUriList)-1]
+		fileName := downloadUriList[len(downloadUriList)-1]
 
-		// Create the local download path
-		filepath := filepath.Join(DownloadFilePath, filename)
+		// Destination in OctoPrint’s uploads
+		user, err := user.Current()
+		if err != nil {
+			return fmt.Sprintf("Error getting user home: %v", err)
+		}
+		filePath := filepath.Join(user.HomeDir, ".octoprint/uploads", fileName)
 
 		// Is the file already local, if not, go get it
-		if FileExists(filepath) {
-			fmt.Println("Cache hit: ", filename)
-			return filepath
+		if FileExists(filePath) {
+			fmt.Println("Cache hit: ", fileName)
+			return filePath
 		} else {
 			fmt.Println("Retrieving file @ ", downloadUri)
-			err := s3DownloadFile(filepath, downloadUri)
+			err := s3DownloadFile(filePath, downloadUri)
 			if err != nil {
 				return err.Error()
 			}
 
-			fmt.Println(filename + " was downloaded")
-			return filename + " was downloaded"
+			fmt.Println(fileName + " was downloaded")
+			return fileName + " was downloaded"
 		}
 
 	default:

@@ -90,19 +90,21 @@ func adminMessages(envelope *OverlayEnvelope) string {
 			result := RemoveUser(cmd)
 			return packageReply(result)
 
-		// File operations
-
-		case "deletefile":
-			result := Deletefile(cmd)
-			return packageReply(result)
-
-		case "getfilelist":
-			fileList := Getfilelist()
-			return packageReply(fileList)
-
-		case "getfile":
-			return Getfile(cmd)
-
+		// Upload/Download operations
+		/*
+			case "deletefile":
+				result := Deletefile(cmd)
+				return packageReply(result)
+		*/
+		/*
+			case "getfilelist":
+				fileList := Getfilelist()
+				return packageReply(fileList)
+		*/
+		/*
+			case "getfile":
+				return Getfile(cmd)
+		*/
 		case "downloadfile":
 			result := Downloadfile(cmd)
 			return packageReply(result)
@@ -134,11 +136,11 @@ func adminMessages(envelope *OverlayEnvelope) string {
 		// *** Octo Service operations *** //
 
 		case "getapiversion":
-			result := GetApiVersion(cmd)
+			result := GetApiVersion()
 			return packageReply(result)
 
 		case "checkoctoservice":
-			result := checkOctoService()
+			result := CheckOctoService()
 			return packageReply(result)
 
 		case "startoctoservice":
@@ -149,28 +151,44 @@ func adminMessages(envelope *OverlayEnvelope) string {
 			result := ConnectOctoService()
 			return packageReply(result)
 
-		case "disconnect":
+		case "disconnectoctoservice":
 			result := DisconnectOctoService()
 			return packageReply(result)
 
-		case "getconnection":
-			result := GetConnection()
+		case "getconnectionsettings":
+			result := GetConnectionSettings()
 			return packageReply(result)
 
-		case "printfile":
-			result := PrintFile(cmd)
+		case "deleteoctofile":
+			result := DeleteOctoFile(cmd)
+			return packageReply(result)
+
+		case "getoctofilelist":
+			result := GetOctoFileList()
+			return packageReply(result)
+
+		case "getoctofileinfo":
+			result := GetOctoFileInfo(cmd)
+			return packageReply(result)
+
+		case "printoctofile":
+			result := PrintOctoFile(cmd)
+			return packageReply(result)
+
+		case "getgcodeanalysis":
+			result := GetGcodeAnalysis(cmd)
 			return packageReply(result)
 
 		case "getjobstatus":
-			result := GetJobStatus(cmd)
+			result := GetJobStatus()
 			return packageReply(result)
 
 		case "getprinterstate":
-			result := GetPrinterState(cmd)
+			result := GetPrinterState()
 			return packageReply(result)
 
 		case "gettemp":
-			result := GetTemperature(cmd)
+			result := GetTemperature()
 			return packageReply(result)
 
 		default:
