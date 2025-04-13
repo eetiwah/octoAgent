@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -9,11 +11,31 @@ import (
 	"cwtch.im/cwtch/protocol/connections"
 )
 
-func Subscribe(commandList []string, id int) string {
+/*
+
+Publish:
+
+This function publishes temp information derived from _getTempEntry
+every "increment" seconds until math.Round(status.Progress) is equal to 100 to peerID, where
+peerId can represent a peer or a group formed by a communityAgent. The adminID
+represents the admin or conductorAgent that is organizing/requesting the process.
+
+Note: if peerID = adminID then _getTempEntry data will be sent to the adminID
+
+
+getTempEntry provides the following information:
+Tool:   tool,
+Time:   time.Now().Format("2006-01-02 15:04:05.999999999 -0700 MST"),
+Actual: state.Actual,
+Target: state.Target,
+
+*/
+
+func Publish(commandList []string, adminID int) string {
 	switch len(commandList) {
 	case 2:
 		if commandList[1] == "-help" {
-			return "usage: subscribe increment duration [destinationNtKID]"
+			return "usage: publish increment peerId"
 		} else {
 			return "Error: syntax, second attribute not recognized"
 		}
@@ -25,73 +47,14 @@ func Subscribe(commandList []string, id int) string {
 			return "Error: increment conversion failed "
 		}
 
-		// Convert duration from string to int
-		duration, err := strconv.Atoi(commandList[2])
-		if err != nil {
-			return "Error: duration conversion failed "
-		}
-
-		// Set tick interval
-		tickInterval := time.Duration(increment) * time.Second
-
-		// Create a ticker that ticks every tickInterval
-		ticker := time.NewTicker(tickInterval)
-
-		// Define the function to be executed on each tick
-		tickerFunc := func() {
-			result := _getTempEntry()
-			msg := string(cwtchbot.PackMessage(model.OverlayChat, result))
-			cwtchbot.Peer.SendMessage(id, msg)
-		}
-
-		// Start a goroutine to execute the function on each tick
-		go func() {
-			tickerCount := 0
-			for range ticker.C {
-				// Execute the function on each tick
-				tickerFunc()
-
-				// Increment the ticketcounter
-				tickerCount++
-
-				// Are we done?
-				if tickerCount*int(tickInterval/time.Second) >= duration {
-					// Stop the ticker after duration seconds
-					ticker.Stop()
-
-					// Print log message
-					fmt.Println("Ticker stopped after", duration, "seconds.")
-
-					// Create completion message
-					msg := string(cwtchbot.PackMessage(model.OverlayChat, "Subscribe completed"))
-
-					// Send message to originator of subscription request
-					cwtchbot.Peer.SendMessage(id, msg)
-					break
-				}
-			}
-		}()
-		return "Subscribed!"
-
-	case 4:
-		// Convert increment from string to int
-		increment, err := strconv.Atoi(commandList[1])
-		if err != nil {
-			return "Error: increment conversion failed "
-		}
-
-		// Convert duration from string to int
-		duration, err := strconv.Atoi(commandList[2])
-		if err != nil {
-			return "Error: duration conversion failed "
-		}
-
 		// Get conversation information with destination
-		conversation, _ := cwtchbot.Peer.FetchConversationInfo(commandList[3])
+		conversation, err := cwtchbot.Peer.FetchConversationInfo(commandList[2])
+		if err != nil {
+			return "Error: peer is not a contact: " + commandList[2]
+		}
 
 		// Ensure destination is online
-		connectionState := cwtchbot.Peer.GetPeerState(commandList[3])
-
+		connectionState := cwtchbot.Peer.GetPeerState(commandList[2])
 		if connectionState == connections.DISCONNECTED {
 			return "Error: peer is not online"
 		}
@@ -104,8 +67,6 @@ func Subscribe(commandList []string, id int) string {
 
 		// Define the function to be executed on each tick
 		tickerFunc := func() {
-			//			fmt.Println("Ticker ticked!") // Replace this statement with an action
-			//			msg := string(cwtchbot.PackMessage(model.OverlayChat, "Ticker ticked!"))
 			result := _getTempEntry()
 			msg := string(cwtchbot.PackMessage(model.OverlayChat, result))
 			cwtchbot.Peer.SendMessage(conversation.ID, msg)
@@ -113,32 +74,39 @@ func Subscribe(commandList []string, id int) string {
 
 		// Start a goroutine to execute the function on each tick
 		go func() {
-			tickerCount := 0
 			for range ticker.C {
 				// Execute the function on each tick
 				tickerFunc()
 
-				// Increment the ticketcounter
-				tickerCount++
+				// Get the Job Status to evaluate using it instead of duration for termination
+				statusRsp := GetJobStatus()
+				var status JobStatus
+				err := json.Unmarshal([]byte(statusRsp), &status)
+				if err != nil {
+					fmt.Printf("Error: failed to encode job state: %v", err.Error())
+				}
+
+				// fmt.Printf("Job Progress = %f\t", math.Round(status.Progress))
+				// fmt.Printf("Job TimeLeft = %f\n", math.Round(status.TimeLeft))
 
 				// Are we done?
-				if tickerCount*int(tickInterval/time.Second) >= duration {
+				if math.Round(status.Progress) >= 100 {
 					// Stop the ticker after duration seconds
 					ticker.Stop()
 
 					// Print log message
-					fmt.Println("Ticker stopped after", duration, "seconds.")
+					fmt.Println("Print job is complete...")
 
 					// Create completion message
-					msg := string(cwtchbot.PackMessage(model.OverlayChat, "Subscribe completed"))
+					msg := string(cwtchbot.PackMessage(model.OverlayChat, "Publishing completed"))
 
 					// Send message to originator of subscription request
-					cwtchbot.Peer.SendMessage(id, msg)
+					cwtchbot.Peer.SendMessage(adminID, msg)
 					break
 				}
 			}
 		}()
-		return "Subscribed!"
+		return "Publishing has started"
 
 	default:
 		return "Error: parameter mismatch"

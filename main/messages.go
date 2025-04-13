@@ -22,7 +22,7 @@ func adminMessages(envelope *OverlayEnvelope) string {
 	switch envelope.Overlay {
 	case TextMessageOverlay:
 		cmd := strings.Split(envelope.Data, " ")
-		id := envelope.onion
+		requestingPeerId := envelope.onion
 		fmt.Printf("\nCommand was received: %s\n", strings.ToLower(cmd[0]))
 
 		switch strings.ToLower(cmd[0]) {
@@ -129,8 +129,8 @@ func adminMessages(envelope *OverlayEnvelope) string {
 			result := Route(cmd)
 			return packageReply(result)
 
-		case "subscribe":
-			result := Subscribe(cmd, id)
+		case "publish":
+			result := Publish(cmd, requestingPeerId)
 			return packageReply(result)
 
 		// *** Octo Service operations *** //

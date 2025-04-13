@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"octoAgent/octoprint"
 	"os"
 	"os/exec"
@@ -369,7 +370,7 @@ func GetOctoFileList() string {
 		// Build result
 		var strB strings.Builder
 		for _, file := range filesResponse.Files {
-			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %f", file.Name, file.Size, file.GcodeAnalysis.EstimatedPrintTime)
+			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %f", file.Name, file.Size, math.Round(file.GcodeAnalysis.EstimatedPrintTime))
 		}
 
 		str := strB.String()
@@ -583,10 +584,11 @@ func GetJobStatus() string {
 
 		status := JobStatus{
 			FileName:    job.Job.File.Name,
-			Progress:    job.Progress.Completion,
-			TimeElapsed: job.Progress.PrintTime,
-			TimeLeft:    job.Progress.PrintTimeLeft,
+			Progress:    math.Round(job.Progress.Completion),
+			TimeElapsed: math.Round(job.Progress.PrintTime),
+			TimeLeft:    math.Round(job.Progress.PrintTimeLeft),
 		}
+
 		jsonBytes, err := json.Marshal(status)
 		if err != nil {
 			return "Error: failed to encode job state: " + err.Error()
@@ -676,12 +678,12 @@ func GetPrinterState() string {
 	log.Printf("Raw current temperatures: %s", tempBytes)
 
 	status := PrinterStatus{
-		State:        printer.State.Text,         // e.g., "Printing"
-		ExtruderTemp: 0.0,                        // e.g., 210.0
-		BedTemp:      0.0,                        // e.g., 60.0
-		Progress:     job.Progress.Completion,    // e.g., 75.2
-		FileName:     job.Job.File.Name,          // e.g., "Ring.gcode"
-		TimeLeft:     job.Progress.PrintTimeLeft, // e.g., 1200
+		State:        printer.State.Text,                     // e.g., "Printing"
+		ExtruderTemp: 0.0,                                    // e.g., 210.0
+		BedTemp:      0.0,                                    // e.g., 60.0
+		Progress:     math.Round(job.Progress.Completion),    // e.g., 75.2
+		FileName:     job.Job.File.Name,                      // e.g., "Ring.gcode"
+		TimeLeft:     math.Round(job.Progress.PrintTimeLeft), // e.g., 1200
 		Printing:     printer.State.Flags.Printing,
 	}
 
