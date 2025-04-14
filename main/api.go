@@ -370,7 +370,7 @@ func GetOctoFileList() string {
 		// Build result
 		var strB strings.Builder
 		for _, file := range filesResponse.Files {
-			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %f", file.Name, file.Size, math.Round(file.GcodeAnalysis.EstimatedPrintTime))
+			fmt.Fprintf(&strB, "Name: %s\nSize: %d\nEstTime: %.1f\n", file.Name, file.Size, file.GcodeAnalysis.EstimatedPrintTime)
 		}
 
 		str := strB.String()
@@ -648,7 +648,7 @@ func _getTempEntry() string {
 		return "Error: " + err.Error()
 	}
 
-	fmt.Println("Data str: ", string(str))
+	// fmt.Println("Data str: ", string(str))
 
 	// Combine "addtemprecord" with the JSON string
 	return "addtemprecord " + string(str)

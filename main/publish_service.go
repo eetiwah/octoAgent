@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"time"
@@ -21,7 +22,6 @@ peerId can represent a peer or a group formed by a communityAgent. The adminID
 represents the admin or conductorAgent that is organizing/requesting the process.
 
 Note: if peerID = adminID then _getTempEntry data will be sent to the adminID
-
 
 getTempEntry provides the following information:
 Tool:   tool,
@@ -53,7 +53,7 @@ func Publish(commandList []string, adminID int) string {
 			return "Error: peer is not a contact: " + commandList[2]
 		}
 
-		// Ensure destination is online
+		// Check peer online
 		connectionState := cwtchbot.Peer.GetPeerState(commandList[2])
 		if connectionState == connections.DISCONNECTED {
 			return "Error: peer is not online"
@@ -69,7 +69,12 @@ func Publish(commandList []string, adminID int) string {
 		tickerFunc := func() {
 			result := _getTempEntry()
 			msg := string(cwtchbot.PackMessage(model.OverlayChat, result))
-			cwtchbot.Peer.SendMessage(conversation.ID, msg)
+			//cwtchbot.Peer.SendMessage(conversation.ID, msg)
+			if _, err := cwtchbot.Peer.SendMessage(conversation.ID, msg); err != nil {
+				log.Printf("Error sending completion message to admin %d: %v", conversation.ID, err)
+			} else {
+				log.Printf("Sent completion message to admin %d", conversation.ID)
+			}
 		}
 
 		// Start a goroutine to execute the function on each tick
@@ -84,10 +89,11 @@ func Publish(commandList []string, adminID int) string {
 				err := json.Unmarshal([]byte(statusRsp), &status)
 				if err != nil {
 					fmt.Printf("Error: failed to encode job state: %v", err.Error())
+					continue
 				}
 
-				// fmt.Printf("Job Progress = %f\t", math.Round(status.Progress))
-				// fmt.Printf("Job TimeLeft = %f\n", math.Round(status.TimeLeft))
+				// Log progress
+				log.Printf("Job Progress: %.1f, TimeLeft: %.1f", status.Progress, status.TimeLeft)
 
 				// Are we done?
 				if math.Round(status.Progress) >= 100 {
@@ -101,7 +107,11 @@ func Publish(commandList []string, adminID int) string {
 					msg := string(cwtchbot.PackMessage(model.OverlayChat, "Publishing completed"))
 
 					// Send message to originator of subscription request
-					cwtchbot.Peer.SendMessage(adminID, msg)
+					if _, err := cwtchbot.Peer.SendMessage(adminID, msg); err != nil {
+						log.Printf("Error sending completion message to admin %d: %v", adminID, err)
+					} else {
+						log.Printf("Sent completion message to admin %d", adminID)
+					}
 					break
 				}
 			}
