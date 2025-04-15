@@ -22,6 +22,7 @@ import (
 
 // Define global variables
 var (
+	// bot specific
 	bot_name       = ""
 	bot_attribute  = ""
 	bot_admin_ID   = ""
@@ -97,6 +98,10 @@ func instantiateAgent() error {
 	return nil
 }
 
+func sendInvite(id string) {
+
+}
+
 func main() {
 	// Set global variables
 	err := setGlobalVars()
@@ -111,6 +116,16 @@ func main() {
 		log.Printf("Error: instantiating the bot, %s", err)
 		return
 	}
+
+	// *** This needs to be added to support ABAC *** //
+
+	// Check if there is a contact associated with admin
+	_, err = cwtchbot.Peer.FetchConversationInfo(bot_admin_ID)
+	if err != nil {
+		log.Printf("Error: admin is not a contact: %s, sending invite...", bot_admin_ID)
+		sendInvite(bot_admin_ID)
+	}
+	log.Printf("Admin is a contact: %s", bot_admin_ID)
 
 	// Initialize new octoclient
 	octoclient = octoprint.NewClient(baseURL, apiKey)
@@ -129,35 +144,59 @@ func main() {
 		for {
 			message := cwtchbot.Queue.Next()
 			conversation, _ := cwtchbot.Peer.FetchConversationInfo(message.Data[event.RemotePeer])
+
+			//log.Printf("\n\nMessage type received: %v\n\n", message.EventType)
+
 			switch message.EventType {
+			// This does not occur with out group invite
+			case event.InvitePeerToGroup:
+				log.Printf("Invite received contact from %v with data = %v\n", conversation, message.Data[event.RemotePeer])
+
+				if inList(conversation.Handle, bot_admin_list) {
+					cwtchbot.Peer.AcceptConversation(conversation.ID)
+					reply := packageReply("Admin: invite has been accepted")
+					cwtchbot.Peer.SendMessage(conversation.ID, reply)
+				} else {
+					log.Printf("Invite refused from %v %v\n", conversation, message.Data[event.RemotePeer])
+				}
+
 			case event.ContactCreated:
 				log.Printf("Received contact request from %v %v\n", conversation, message.Data[event.RemotePeer])
 
 				if inList(conversation.Handle, bot_admin_list) {
 					cwtchbot.Peer.AcceptConversation(conversation.ID)
-					reply := packageReply("You been added as an admin")
+					reply := packageReply("Admin: contact request has been accepted")
 					cwtchbot.Peer.SendMessage(conversation.ID, reply)
 				} else if inList(conversation.Handle, bot_user_list) {
 					cwtchbot.Peer.AcceptConversation(conversation.ID)
-					reply := packageReply("You been added as an user")
+					reply := packageReply("User: contact request has been accepted")
 					cwtchbot.Peer.SendMessage(conversation.ID, reply)
 				} else {
 					log.Printf("Contact request refused from %v %v\n", conversation, message.Data[event.RemotePeer])
 				}
 
 			case event.NewMessageFromPeer:
+				envelope := Unwrap(conversation.ID, message.Data[event.Data])
+
 				log.Println("NewMessageFromPeer")
 				log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
 				log.Printf("Raw envelope = %v\n", message.Data[event.Data])
-
-				envelope := Unwrap(conversation.ID, message.Data[event.Data])
-				log.Printf("Data = %v\n", envelope.Data)
+				//log.Printf("Data = %v\n", envelope.Data)
 
 				// Check if this is a response or not
 				if envelope.Data != "Error:" && envelope.Data != "Success" {
 					if inList(conversation.Handle, bot_admin_list) {
-						reply := adminMessages(envelope)
-						cwtchbot.Peer.SendMessage(conversation.ID, reply)
+						switch envelope.Overlay {
+						case TextMessageOverlay:
+							reply := adminMessages(envelope)
+							cwtchbot.Peer.SendMessage(conversation.ID, reply)
+						case InviteGroupOverlay:
+							reply := inviteGroup(message.Data[event.Data])
+							cwtchbot.Peer.SendMessage(conversation.ID, reply)
+						default:
+							cwtchbot.Peer.SendMessage(conversation.ID, "Error: unrecognized command")
+						}
+
 					} else if inList(conversation.Handle, bot_user_list) {
 						reply := userMessages(envelope)
 						cwtchbot.Peer.SendMessage(conversation.ID, reply)
