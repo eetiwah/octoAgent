@@ -4,12 +4,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
+	"regexp"
 	"strings"
 )
 
 const (
 	TextMessageOverlay       = 1
 	ActionableMessageOverlay = 5
+	SuggestContactOverlay    = 100
 	InviteGroupOverlay       = 101
 )
 
@@ -20,18 +23,24 @@ type OverlayEnvelope struct {
 }
 
 type GroupInvite struct {
-	GroupID       string  `json:"GroupID"`
-	GroupName     string  `json:"GroupName"`
-	SignedGroupID *string `json:"SignedGroupID"` // Nullable string
-	Timestamp     int     `json:"Timestamp"`
-	SharedKey     string  `json:"SharedKey"`
-	ServerHost    string  `json:"ServerHost"`
+	GroupID   string `json:"GroupID"`
+	GroupName string `json:"GroupName"`
+	//	SignedGroupID string `json:"SignedGroupID"` // Nullable string
+	Timestamp  int    `json:"Timestamp"`
+	SharedKey  string `json:"SharedKey"`
+	ServerHost string `json:"ServerHost"`
+}
+
+// Message holds parts data
+type Message struct {
+	O int    `json:"o"`
+	D string `json:"d"`
 }
 
 func adminMessages(envelope *OverlayEnvelope) string {
 	cmd := strings.Split(envelope.Data, " ")
 	requestingPeerId := envelope.onion
-	fmt.Printf("\nCommand was received: %s\n", strings.ToLower(cmd[0]))
+	fmt.Printf("Command was received: %s", strings.ToLower(cmd[0]))
 
 	switch strings.ToLower(cmd[0]) {
 	case "admin":
@@ -221,28 +230,44 @@ func inviteGroup(bundle string) string {
 
 // decodeGroupInvite processes a cwtch group invite
 func decodeGroupInvite(content string) error {
+	// Log raw input
+	log.Printf("\n\nRaw content: %q (length: %d)", content, len(content))
+
 	// Split on ||
-	parts := strings.Split(content, "||")
+	parts := strings.Split(strings.TrimSpace(content), "||")
+	log.Printf("Parts: %v (length: %d)", parts, len(parts))
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid content: expected 2 parts, got %d", len(parts))
+		return fmt.Errorf("error: invalid content: expected 2 parts, got %d", len(parts))
 	}
 
 	// Skip first 5 characters of parts[1]
 	if len(parts[1]) <= 5 {
-		return fmt.Errorf("parts[1] too short: %d chars", len(parts[1]))
+		return fmt.Errorf("error: parts[1] too short: %d chars", len(parts[1]))
 	}
 	encoded := parts[1][5:]
+	log.Printf("Encoded Base64: %q (length: %d)", encoded, len(encoded))
+
+	// Validate Base64
+	if !regexp.MustCompile(`^[A-Za-z0-9+/=]+$`).MatchString(encoded) {
+		return fmt.Errorf("error: invalid Base64 characters in encoded string")
+	}
 
 	// Decode Base64
 	decodedBytes, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return fmt.Errorf("base64 decode failed: %v", err)
+		// Try RawStdEncoding for padding issues
+		log.Printf("Error: StdEncoding failed: %v, trying RawStdEncoding", err)
+		decodedBytes, err = base64.RawStdEncoding.DecodeString(encoded)
+		if err != nil {
+			return fmt.Errorf("error: base64 decode failed: %v", err)
+		}
 	}
+	log.Printf("Decoded string: %s", string(decodedBytes))
 
 	// Parse JSON
 	var invite GroupInvite
 	if err := json.Unmarshal(decodedBytes, &invite); err != nil {
-		return fmt.Errorf("json decode failed: %v", err)
+		return fmt.Errorf("error: json decode failed: %v", err)
 	}
 
 	// This is just for testing purposes
@@ -250,7 +275,6 @@ func decodeGroupInvite(content string) error {
 	fmt.Printf("GroupName = %s\n", invite.GroupName)
 	fmt.Printf("ServerHost = %s\n", invite.ServerHost)
 	fmt.Printf("SharedKey = %s\n", invite.SharedKey)
-	fmt.Printf("SharedGroupID = %s\n", *invite.SignedGroupID)
 
 	return nil
 }

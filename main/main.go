@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path"
 	"runtime"
+	"strconv"
 	"syscall"
 
 	"cwtch.im/cwtch/event"
@@ -143,13 +144,11 @@ func main() {
 		log.Println("Starting message queue go coroutine")
 		for {
 			message := cwtchbot.Queue.Next()
-			conversation, _ := cwtchbot.Peer.FetchConversationInfo(message.Data[event.RemotePeer])
-
-			//log.Printf("\n\nMessage type received: %v\n\n", message.EventType)
 
 			switch message.EventType {
 			// This does not occur with out group invite
 			case event.InvitePeerToGroup:
+				conversation, _ := cwtchbot.Peer.FetchConversationInfo(message.Data[event.RemotePeer])
 				log.Printf("Invite received contact from %v with data = %v\n", conversation, message.Data[event.RemotePeer])
 
 				if inList(conversation.Handle, bot_admin_list) {
@@ -161,6 +160,7 @@ func main() {
 				}
 
 			case event.ContactCreated:
+				conversation, _ := cwtchbot.Peer.FetchConversationInfo(message.Data[event.RemotePeer])
 				log.Printf("Received contact request from %v %v\n", conversation, message.Data[event.RemotePeer])
 
 				if inList(conversation.Handle, bot_admin_list) {
@@ -176,27 +176,33 @@ func main() {
 				}
 
 			case event.NewMessageFromPeer:
+				conversation, _ := cwtchbot.Peer.FetchConversationInfo(message.Data[event.RemotePeer])
 				envelope := Unwrap(conversation.ID, message.Data[event.Data])
 
 				log.Println("NewMessageFromPeer")
-				log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
-				log.Printf("Raw envelope = %v\n", message.Data[event.Data])
+				//log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
+				//log.Printf("Raw envelope = %v\n", message.Data[event.Data])
 				//log.Printf("Data = %v\n", envelope.Data)
 
 				// Check if this is a response or not
 				if envelope.Data != "Error:" && envelope.Data != "Success" {
 					if inList(conversation.Handle, bot_admin_list) {
 						switch envelope.Overlay {
+
 						case TextMessageOverlay:
 							reply := adminMessages(envelope)
 							cwtchbot.Peer.SendMessage(conversation.ID, reply)
-						case InviteGroupOverlay:
-							reply := inviteGroup(message.Data[event.Data])
-							cwtchbot.Peer.SendMessage(conversation.ID, reply)
-						default:
-							cwtchbot.Peer.SendMessage(conversation.ID, "Error: unrecognized command")
-						}
 
+						case InviteGroupOverlay:
+							reply := inviteGroup(envelope.Data)
+							cwtchbot.Peer.SendMessage(conversation.ID, reply)
+
+						case SuggestContactOverlay:
+							cwtchbot.Peer.SendMessage(conversation.ID, packageReply("Received Suggest Contact Overlay request"))
+
+						default:
+							cwtchbot.Peer.SendMessage(conversation.ID, packageReply("Error: unrecognized command"))
+						}
 					} else if inList(conversation.Handle, bot_user_list) {
 						reply := userMessages(envelope)
 						cwtchbot.Peer.SendMessage(conversation.ID, reply)
@@ -208,9 +214,35 @@ func main() {
 					log.Printf("Response: %s\n", envelope.Data)
 				}
 
+			case event.NewMessageFromGroup:
+				conversationID, err := strconv.Atoi(message.Data[event.ConversationID])
+				if err != nil {
+					log.Printf("error: failed to convert string to textto int: %v", err)
+					return
+				}
+
+				envelope := Unwrap(conversationID, message.Data[event.Data])
+
+				log.Println("NewMessageFromGroup")
+				//log.Printf("ConversationID = %d", conversationID)
+				//log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
+				//log.Printf("Raw envelope = %v\n", message.Data[event.Data])
+				//log.Printf("Data = %v\n", envelope.Data)
+				//log.Printf("Overlay = %v\n", envelope.Overlay)
+
+				cwtchbot.Peer.SendMessage(conversationID, packageReply("octoAgent received: "+envelope.Data))
+
 			case event.PeerStateChange:
 				data := message.Data
-				log.Printf("PeerStateChange: %s: %s", data[event.ConnectionState], data[event.RemotePeer])
+				log.Printf("PeerStateChange: %s\n", data[event.ConnectionState])
+				log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
+				log.Printf("Raw envelope = %v\n", message.Data[event.Data])
+
+			case event.ServerStateChange:
+				data := message.Data
+				log.Printf("ServerStateChange: %s\n", data[event.ConnectionState])
+				log.Printf("Remote Peer = %v\n", message.Data[event.RemotePeer])
+				log.Printf("Raw envelope = %v\n", message.Data[event.Data])
 
 			case event.PeerAcknowledgement:
 				log.Println("PeerAcknowledgement")

@@ -258,7 +258,7 @@ func Help() string {
 }
 
 func Ping() string {
-	return "Pong"
+	return "pong"
 }
 
 func getList(list []string) string {
