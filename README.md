@@ -1,12 +1,11 @@
-# octoBot
+# octoAgent
 
 A Go-based agent framework for interacting with 3D printers via OctoPrint, part of the broader *NeedToKnow* decentralized swarm architecture.
 
 ## Prerequisites
 
 - **OctoPrint Service**: Required for API communication.
-  - **Installation**: Install OctoPrint on your system (e.g., Ubuntu NUC):
-
+  - # Installation**: Install OctoPrint on your system (e.g., Ubuntu NUC):
     cd [local directory]
     git clone https://github.com/OctoPrint/OctoPrint.git
     cd OctoPrint
@@ -19,7 +18,6 @@ A Go-based agent framework for interacting with 3D printers via OctoPrint, part 
     add:
     serial: -> this should already be present
       log: true -> add this
-
 
     # start the service
     [local directory]/OctoPrint/venv/bin/octoprint serve
@@ -39,3 +37,8 @@ A Go-based agent framework for interacting with 3D printers via OctoPrint, part 
 
   make sure the file permissions for profiles within tor/octoAgent is set appropriately for accessing
   chmod -R go+rx main/tor/linux/octoAgent/profiles maybe needed
+
+## Position Tracking
+  - Function**: `NewPositionTracker(logPath string) (*PositionTracker, error)`
+  - Data**: Tracks Z from `serial.log` (e.g., `G1 Z0.2`, `G0 Z0.6`).
+  - Output**: `Position{Z: 0.200}` via `GetPosition`.
