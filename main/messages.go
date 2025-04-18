@@ -40,7 +40,7 @@ type Message struct {
 func adminMessages(envelope *OverlayEnvelope) string {
 	cmd := strings.Split(envelope.Data, " ")
 	requestingPeerId := envelope.onion
-	fmt.Printf("Command was received: %s", strings.ToLower(cmd[0]))
+	fmt.Printf("Command was received: %s\n", strings.ToLower(cmd[0]))
 
 	switch strings.ToLower(cmd[0]) {
 	case "admin":
@@ -196,12 +196,18 @@ func adminMessages(envelope *OverlayEnvelope) string {
 		result := GetGcodeAnalysis(cmd)
 		return packageReply(result)
 
+		// This should be replaced by GetPrintStatus
 	case "getjobstatus":
 		result := GetJobStatus()
 		return packageReply(result)
 
+		// This should be replaced by GetPrintStatus
 	case "getprinterstate":
 		result := GetPrinterState()
+		return packageReply(result)
+
+	case "getprintstatus":
+		result := GetPrintStatus()
 		return packageReply(result)
 
 	case "gettemp":

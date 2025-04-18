@@ -123,6 +123,20 @@ type PrinterStatus struct {
 	Printing     bool    `json:"printing"`
 }
 
+type PrintStatus struct {
+	FileName     string  `json:"file_name"`
+	Progress     float64 `json:"progress"`
+	TimeElapsed  float64 `json:"time_elapsed"`
+	TimeLeft     float64 `json:"time_left"`
+	State        string  `json:"state"`
+	PositionX    float64 `json:"position_x"`
+	PositionY    float64 `json:"position_y"`
+	PositionZ    float64 `json:"position_z"`
+	PositionE    float64 `json:"position_e"`
+	ExtruderTemp float64 `json:"extruder_temp"`
+	BedTemp      float64 `json:"bed_temp"`
+}
+
 type FilesResponse struct {
 	Files []FileInfo `json:"Files"`
 	Free  int        `json:"Free"`
@@ -575,28 +589,28 @@ func GetGcodeAnalysis(commandList []string) string {
 }
 
 func GetJobStatus() string {
-	if isConnected {
-		octoReq := octoprint.JobRequest{}
-		job, err := octoReq.Do(octoclient)
-		if err != nil {
-			return ("Error GetJobStatus: " + err.Error())
-		}
-
-		status := JobStatus{
-			FileName:    job.Job.File.Name,
-			Progress:    math.Round(job.Progress.Completion),
-			TimeElapsed: math.Round(job.Progress.PrintTime),
-			TimeLeft:    math.Round(job.Progress.PrintTimeLeft),
-		}
-
-		jsonBytes, err := json.Marshal(status)
-		if err != nil {
-			return "Error: failed to encode job state: " + err.Error()
-		}
-		return string(jsonBytes)
-	} else {
+	if !isConnected {
 		return "Error: not connected"
 	}
+
+	octoReq := octoprint.JobRequest{}
+	job, err := octoReq.Do(octoclient)
+	if err != nil {
+		return ("Error GetJobStatus: " + err.Error())
+	}
+
+	status := JobStatus{
+		FileName:    job.Job.File.Name,
+		Progress:    math.Round(job.Progress.Completion),
+		TimeElapsed: math.Round(job.Progress.PrintTime),
+		TimeLeft:    math.Round(job.Progress.PrintTimeLeft),
+	}
+
+	jsonBytes, err := json.Marshal(status)
+	if err != nil {
+		return "Error: failed to encode job state: " + err.Error()
+	}
+	return string(jsonBytes)
 }
 
 func GetTemperature() string {
@@ -678,13 +692,15 @@ func GetPrinterState() string {
 	log.Printf("Raw current temperatures: %s", tempBytes)
 
 	status := PrinterStatus{
+		FileName: job.Job.File.Name,                   // e.g., "Ring.gcode"
+		Progress: math.Round(job.Progress.Completion), // e.g., 75.2
+
+		TimeLeft:     math.Round(job.Progress.PrintTimeLeft), // e.g., 1200
 		State:        printer.State.Text,                     // e.g., "Printing"
 		ExtruderTemp: 0.0,                                    // e.g., 210.0
 		BedTemp:      0.0,                                    // e.g., 60.0
-		Progress:     math.Round(job.Progress.Completion),    // e.g., 75.2
-		FileName:     job.Job.File.Name,                      // e.g., "Ring.gcode"
-		TimeLeft:     math.Round(job.Progress.PrintTimeLeft), // e.g., 1200
-		Printing:     printer.State.Flags.Printing,
+
+		Printing: printer.State.Flags.Printing,
 	}
 
 	// Iterate Current map for temps
@@ -704,4 +720,102 @@ func GetPrinterState() string {
 	}
 
 	return string(jsonBytes)
+}
+
+// Global tracker instance
+var positionTracker *PositionTracker
+
+// Initialize tracker at program start
+func init() {
+	var err error
+	positionTracker, err = NewPositionTracker("/home/rich/.octoprint/logs/serial.log")
+	if err != nil {
+		fmt.Printf("Failed to initialize position tracker: %v\n", err)
+	}
+}
+
+func GetPrintStatus() string {
+	if !isConnected {
+		return "Error: not connected"
+	}
+
+	// Fetch job data
+	octoReq := octoprint.JobRequest{}
+	job, err := octoReq.Do(octoclient)
+	if err != nil {
+		return "Error GetJobStatus: " + err.Error()
+	}
+
+	// Fetch printer state
+	stateReq := octoprint.StateRequest{}
+	state, err := stateReq.Do(octoclient)
+	if err != nil {
+		return "Error GetStateStatus: " + err.Error()
+	}
+
+	// Get position from tracker
+	pos := positionTracker.GetPosition()
+
+	// Build status
+	status := PrintStatus{
+		FileName:     job.Job.File.Name,
+		Progress:     math.Round(job.Progress.Completion),
+		TimeElapsed:  math.Round(job.Progress.PrintTime),
+		TimeLeft:     math.Round(job.Progress.PrintTimeLeft),
+		State:        state.State.Text,
+		PositionX:    pos.X,
+		PositionY:    pos.Y,
+		PositionZ:    pos.Z,
+		PositionE:    pos.E,
+		ExtruderTemp: getTemperature(state, "tool0"),
+		BedTemp:      getTemperature(state, "bed"),
+	}
+
+	jsonBytes, err := json.Marshal(status)
+	if err != nil {
+		return "Error: failed to encode print state: " + err.Error()
+	}
+	return string(jsonBytes)
+}
+
+/*
+// getPosition sends M114 and parses response
+func getPosition(client *octoprint.Client) (Position, error) {
+	var pos Position
+
+	// Try up to 2 times
+	for attempt := 1; attempt <= 2; attempt++ {
+		resp, err := client.CommandResponse([]string{"M114"})
+		if err != nil {
+			return pos, fmt.Errorf("failed to send M114 (attempt %d): %v", attempt, err)
+		}
+
+		// Parse logs for M114 output (e.g., "X:100.5 Y:75.2 Z:0.4")
+		re := regexp.MustCompile(`X:([\d.]+)\s+Y:([\d.]+)\s+Z:([\d.]+)`)
+		for _, log := range resp["logs"] {
+			matches := re.FindStringSubmatch(log)
+			if len(matches) == 4 {
+				pos.X, _ = strconv.ParseFloat(matches[1], 64)
+				pos.Y, _ = strconv.ParseFloat(matches[2], 64)
+				pos.Z, _ = strconv.ParseFloat(matches[3], 64)
+				return pos, nil
+			}
+		}
+
+		// If no valid response, retry after a short delay
+		if attempt < 2 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	return pos, fmt.Errorf("no valid M114 response found in logs after 2 attempts")
+}
+*/
+
+// getTemperature extracts temperature from FullStateResponse
+func getTemperature(state *octoprint.FullStateResponse, tool string) float64 {
+	if temp, exists := state.Temperature.Current[tool]; exists {
+		return temp.Actual
+	}
+	return 0.0
 }

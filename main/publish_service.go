@@ -69,7 +69,6 @@ func Publish(commandList []string, adminID int) string {
 		tickerFunc := func() {
 			result := _getTempEntry()
 			msg := string(cwtchbot.PackMessage(model.OverlayChat, result))
-			//cwtchbot.Peer.SendMessage(conversation.ID, msg)
 			if _, err := cwtchbot.Peer.SendMessage(conversation.ID, msg); err != nil {
 				log.Printf("Error sending completion message to admin %d: %v", conversation.ID, err)
 			} else {
