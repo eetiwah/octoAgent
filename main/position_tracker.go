@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/hpcloud/tail"
@@ -19,14 +21,15 @@ type PositionTracker struct {
 	pos   Position
 	mutex sync.RWMutex
 	re    *regexp.Regexp
+	reZ   *regexp.Regexp // For G1 Z without X/Y
 }
 
 // NewPositionTracker initializes the tracker and starts monitoring
 func NewPositionTracker(logPath string) (*PositionTracker, error) {
 	tracker := &PositionTracker{
-		re: regexp.MustCompile(`Send: N\d+ G1 X([\d.-]+)\s+Y([\d.-]+)(?:\s+Z([\d.-]+))?(?:\s+E([\d.-]+))?`),
+		re:  regexp.MustCompile(`Send: N\d+ G[0-1] X([-]?[0-9]+(?:\.[0-9]+)?)\s+Y([-]?[0-9]+(?:\.[0-9]+)?)(?:\s+Z([-]?[0-9]+(?:\.[0-9]+)?))?(?:\s+E([-]?[0-9]+(?:\.[0-9]+)?))?`),
+		reZ: regexp.MustCompile(`Send: N\d+ G[0-1](?:\s+F\d+)?\s+Z([-]?[0-9]+(?:\.[0-9]+)?)`),
 	}
-
 	// Start background monitoring
 	go tracker.monitorLog(logPath)
 	return tracker, nil
@@ -61,46 +64,50 @@ func (t *PositionTracker) monitorLog(logPath string) {
 
 // parseLine extracts position from a log line
 func (t *PositionTracker) parseLine(line string) {
-	matches := t.re.FindStringSubmatch(line)
-	if len(matches) < 3 {
-		return
-	}
-
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
-	// Update X, Y (always present)
-	if x, err := strconv.ParseFloat(matches[1], 64); err == nil {
-		t.pos.X = x
-	}
-	if y, err := strconv.ParseFloat(matches[2], 64); err == nil {
-		t.pos.Y = y
-	}
+	// Try regex with X/Y
+	matches := t.re.FindStringSubmatch(line)
+	if len(matches) >= 3 {
+		// Update X, Y
+		if x, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			t.pos.X = x
+		}
+		if y, err := strconv.ParseFloat(matches[2], 64); err == nil {
+			t.pos.Y = y
+		}
 
-	// Check for Z and E based on match length
-	switch len(matches) {
-	case 3:
-		// Only X, Y; preserve Z, E
-		//fmt.Printf("Updated position: X:%.2f Y:%.2f Z:%.2f E:%.2f\n", t.pos.X, t.pos.Y, t.pos.Z, t.pos.E)
-	case 4:
-		// X, Y, Z; preserve E
-		if matches[3] != "" {
+		// Check for Z and E
+		if len(matches) >= 4 && matches[3] != "" {
 			if z, err := strconv.ParseFloat(matches[3], 64); err == nil {
 				t.pos.Z = z
+				if strings.Contains(line, "G1") {
+					log.Printf("Printing Z position (G1): %.3f", z)
+				} else {
+					log.Printf("Travel Z position (G0): %.3f", z)
+				}
 			}
 		}
-		//fmt.Printf("Updated position: X:%.2f Y:%.2f Z:%.2f E:%.2f\n", t.pos.X, t.pos.Y, t.pos.Z, t.pos.E)
-	case 5:
-		// X, Y, Z, E
-		if z, err := strconv.ParseFloat(matches[3], 64); err == nil {
+		if len(matches) >= 5 && matches[4] != "" {
+			if e, err := strconv.ParseFloat(matches[4], 64); err == nil {
+				t.pos.E = e
+			}
+		}
+		return
+	}
+
+	// Try regex for G1/G0 Z without X/Y
+	matches = t.reZ.FindStringSubmatch(line)
+	if len(matches) == 2 {
+		if z, err := strconv.ParseFloat(matches[1], 64); err == nil {
 			t.pos.Z = z
+			if strings.Contains(line, "G1") {
+				log.Printf("Printing Z position (G1, Z-only): %.3f", z)
+			} else {
+				log.Printf("Travel Z position (G0, Z-only): %.3f", z)
+			}
 		}
-		if e, err := strconv.ParseFloat(matches[4], 64); err == nil {
-			t.pos.E = e
-		}
-		//fmt.Printf("Updated position: X:%.2f Y:%.2f Z:%.2f E:%.2f\n", t.pos.X, t.pos.Y, t.pos.Z, t.pos.E)
-	default:
-		fmt.Printf("Error: unexpected matches length %v\n", len(matches))
 	}
 }
 
