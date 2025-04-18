@@ -14,6 +14,13 @@ A Go-based agent framework for interacting with 3D printers via OctoPrint, part 
     pip install .
     source venv/bin/activate
 
+    # Enable serial port logging -> required for positioning to work
+    ~/.octoprint/config.yaml
+    add:
+    serial: -> this should already be present
+      log: true -> add this
+
+
     # start the service
     [local directory]/OctoPrint/venv/bin/octoprint serve
 
@@ -23,8 +30,9 @@ A Go-based agent framework for interacting with 3D printers via OctoPrint, part 
     create account
     Goto User Settings under account name
     API key is located there - first time, you will need to create the key
+    Add key and URL to .env file
 
-# Tor executable
+## Tor executable
   make sure the file permissions on the tor executable is set appropriately run
   cd into linux/dependencies
   ./tor --version to test. If errors out, permissions problem!

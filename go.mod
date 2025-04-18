@@ -11,9 +11,13 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/nxadm/tail v1.4.11 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	gopkg.in/fsnotify.v1 v1.4.7 // indirect
+	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
@@ -25,6 +29,7 @@ require (
 	github.com/go-sql-driver/mysql v1.8.0
 	github.com/gtank/merlin v0.1.1 // indirect
 	github.com/gtank/ristretto255 v0.1.3-0.20210930101514-6bb39798585c // indirect
+	github.com/hpcloud/tail v1.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mimoo/StrobeGo v0.0.0-20220103164710-9a04d6ca976b // indirect
 	github.com/stretchr/testify v1.10.0
