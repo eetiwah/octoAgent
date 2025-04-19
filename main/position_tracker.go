@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,18 +20,26 @@ type Position struct {
 
 // PositionTracker monitors serial.log for position updates
 type PositionTracker struct {
-	pos   Position
-	mutex sync.RWMutex
-	re    *regexp.Regexp
-	reZ   *regexp.Regexp // For G1 Z without X/Y
+	pos        Position
+	mutex      sync.RWMutex
+	re         *regexp.Regexp
+	reZ        *regexp.Regexp   // For G1 Z without X/Y
+	zMutex     sync.RWMutex     // Mutex for zValues
+	zValues    map[float64]bool // Unique Z values
+	storeZ     bool             // Flag to store Z values
+	outputFile string           // Output file for Z values
 }
 
 // NewPositionTracker initializes the tracker and starts monitoring
-func NewPositionTracker(logPath string) (*PositionTracker, error) {
+func NewPositionTracker(logPath string, storeZ bool, outputFile string) (*PositionTracker, error) {
 	tracker := &PositionTracker{
-		re:  regexp.MustCompile(`Send: N\d+ G[0-1] X([-]?[0-9]+(?:\.[0-9]+)?)\s+Y([-]?[0-9]+(?:\.[0-9]+)?)(?:\s+Z([-]?[0-9]+(?:\.[0-9]+)?))?(?:\s+E([-]?[0-9]+(?:\.[0-9]+)?))?`),
-		reZ: regexp.MustCompile(`Send: N\d+ G[0-1](?:\s+F\d+)?\s+Z([-]?[0-9]+(?:\.[0-9]+)?)`),
+		re:         regexp.MustCompile(`Send: N\d+ G[0-1] X([-]?[0-9]+(?:\.[0-9]+)?)\s+Y([-]?[0-9]+(?:\.[0-9]+)?)(?:\s+Z([-]?[0-9]+(?:\.[0-9]+)?))?(?:\s+E([-]?[0-9]+(?:\.[0-9]+)?))?`),
+		reZ:        regexp.MustCompile(`Send: N\d+ G[0-1](?:\s+F\d+)?\s+Z([-]?[0-9]+(?:\.[0-9]+)?)`),
+		zValues:    make(map[float64]bool),
+		storeZ:     storeZ,
+		outputFile: outputFile,
 	}
+
 	// Start background monitoring
 	go tracker.monitorLog(logPath)
 	return tracker, nil
@@ -82,6 +92,12 @@ func (t *PositionTracker) parseLine(line string) {
 		if len(matches) >= 4 && matches[3] != "" {
 			if z, err := strconv.ParseFloat(matches[3], 64); err == nil {
 				t.pos.Z = z
+				if t.storeZ {
+					t.zMutex.Lock()
+					t.zValues[z] = true
+					t.zMutex.Unlock()
+					t.saveZValues()
+				}
 				if strings.Contains(line, "G1") {
 					log.Printf("Printing Z position (G1): %.3f", z)
 				} else {
@@ -102,6 +118,12 @@ func (t *PositionTracker) parseLine(line string) {
 	if len(matches) == 2 {
 		if z, err := strconv.ParseFloat(matches[1], 64); err == nil {
 			t.pos.Z = z
+			if t.storeZ {
+				t.zMutex.Lock()
+				t.zValues[z] = true
+				t.zMutex.Unlock()
+				t.saveZValues()
+			}
 			if strings.Contains(line, "G1") {
 				log.Printf("Printing Z position (G1, Z-only): %.3f", z)
 			} else {
@@ -109,6 +131,36 @@ func (t *PositionTracker) parseLine(line string) {
 			}
 		}
 	}
+}
+
+// *** we are opening, reading the whole file, sorting, and adding then closing every time.
+
+// saveZValues writes unique Z values to the output file
+func (t *PositionTracker) saveZValues() {
+	if !t.storeZ {
+		return
+	}
+	t.zMutex.RLock()
+	defer t.zMutex.RUnlock()
+
+	zValues := make([]float64, 0, len(t.zValues))
+	for z := range t.zValues {
+		zValues = append(zValues, z)
+	}
+
+	sort.Float64s(zValues)
+
+	file, err := os.Create(t.outputFile)
+	if err != nil {
+		log.Printf("Failed to write %s: %v", t.outputFile, err)
+		return
+	}
+	defer file.Close()
+
+	for _, z := range zValues {
+		fmt.Fprintf(file, "%.3f\n", z)
+	}
+	log.Printf("Saved %d unique Z values to %s", len(zValues), t.outputFile)
 }
 
 // GetPosition returns the current position

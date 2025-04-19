@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -727,8 +728,14 @@ var positionTracker *PositionTracker
 
 // Initialize tracker at program start
 func init() {
+	storeZ := flag.Bool("store-z", true, "Store unique Z values to file")
+	zFile := flag.String("z-file", "z_stream.txt", "Output file for Z values")
+	logPath := flag.String("log", "/home/rich/.octoprint/logs/serial.log", "Path to serial.log")
+	flag.Parse()
+
 	var err error
-	positionTracker, err = NewPositionTracker("/home/rich/.octoprint/logs/serial.log")
+	positionTracker, err = NewPositionTracker(*logPath, *storeZ, *zFile)
+	//positionTracker, err = NewPositionTracker("/home/rich/.octoprint/logs/serial.log", true, "z_stream.txt")
 	if err != nil {
 		fmt.Printf("Failed to initialize position tracker: %v\n", err)
 	}
